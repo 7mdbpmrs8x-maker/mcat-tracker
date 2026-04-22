@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Trash2,
   Plus,
@@ -25,6 +25,7 @@ import {
   CartesianGrid,
   Legend,
 } from 'recharts';
+import { supabase } from './supabase';
 
 const pastel = {
   bg: '#f7f4f2',
@@ -201,35 +202,6 @@ const starterEntries = [
       'The carbonyl carbon is electron-poor because oxygen pulls electron density away, making that carbon the electrophile.',
     revealState: false,
   },
-  {
-    id: 2,
-    date: '2026-04-20',
-    source: 'AAMC FL1',
-    section: 'BB',
-    category: 'Biochemistry',
-    subcategory: 'Enzymes',
-    secondarySection: '',
-    secondaryCategory: '',
-    secondarySubcategory: '',
-    errorType: 'Reasoning Error',
-    takeaway: 'Competitive inhibition increases Km but does not change Vmax.',
-    questionRef: 'FL1 BB Passage 3 Q18',
-    questionLink: '',
-    screenshotName: '',
-    screenshotUrl: '',
-    onePagerLink: '',
-    notes: 'Knew the content loosely but mixed up Km and Vmax under pressure.',
-    currentConfidence: 'Low',
-    reviewInterval: 1,
-    lastReviewed: '',
-    nextReviewDue: '',
-    reviewCount: 0,
-    answerChoiceSelected: '',
-    correctAnswer: 'C',
-    answerExplanation:
-      'Competitive inhibitors compete at the active site, so more substrate is needed to reach half Vmax, which raises Km while Vmax stays the same.',
-    revealState: false,
-  },
 ];
 
 const emptyForm = {
@@ -275,9 +247,10 @@ function getNextInterval(previous, confidence) {
   return Math.max(4, previous * 3);
 }
 
-function IconButton({ children, onClick, bg, color = pastel.navy }) {
+function IconButton({ children, onClick, bg, color = pastel.navy, type = 'button' }) {
   return (
     <button
+      type={type}
       onClick={onClick}
       style={{
         border: 'none',
@@ -296,7 +269,7 @@ function IconButton({ children, onClick, bg, color = pastel.navy }) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [entries, setEntries] = useState(starterEntries);
+  const [entries, setEntries] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [filterSection, setFilterSection] = useState('ALL');
   const [searchTerm, setSearchTerm] = useState('');
@@ -308,6 +281,56 @@ export default function App() {
     PS: 124,
     CARS: 124,
   });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchEntries();
+  }, []);
+
+  async function fetchEntries() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('entries')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error(error);
+      setEntries(starterEntries);
+    } else {
+      const normalized = (data || []).map((row) => ({
+        id: row.id,
+        date: row.date || '',
+        source: row.source || '',
+        section: row.section || '',
+        category: row.category || '',
+        subcategory: row.subcategory || '',
+        secondarySection: row.secondary_section || '',
+        secondaryCategory: row.secondary_category || '',
+        secondarySubcategory: row.secondary_subcategory || '',
+        errorType: row.error_type || '',
+        takeaway: row.takeaway || '',
+        questionRef: row.question_ref || '',
+        questionLink: row.question_link || '',
+        screenshotName: '',
+        screenshotUrl: row.screenshot_url || '',
+        onePagerLink: row.one_pager_link || '',
+        notes: row.notes || '',
+        currentConfidence: row.current_confidence || 'Low',
+        reviewInterval: row.review_interval || 1,
+        lastReviewed: row.last_reviewed || '',
+        nextReviewDue: row.next_review_due || '',
+        reviewCount: row.review_count || 0,
+        answerChoiceSelected: '',
+        correctAnswer: row.correct_answer || '',
+        answerExplanation: row.answer_explanation || '',
+        revealState: false,
+      }));
+      setEntries(normalized);
+    }
+    setLoading(false);
+  }
 
   const primaryCategories = useMemo(() => {
     return form.section ? Object.keys(kaplanStructure[form.section].books) : [];
@@ -395,30 +418,95 @@ export default function App() {
     ];
   }, [scores]);
 
-  const addEntry = () => {
+  async function addEntry() {
     if (!form.source || !form.section || !form.category || !form.subcategory || !form.takeaway) {
       return;
     }
 
-    const newEntry = {
-      ...form,
-      id: Date.now(),
-      currentConfidence: 'Low',
-      reviewInterval: 1,
-      lastReviewed: '',
-      nextReviewDue: todayStr,
-      reviewCount: 0,
-      answerChoiceSelected: '',
-      revealState: false,
+    setSaving(true);
+
+    const payload = {
+      date: form.date || '',
+      source: form.source || '',
+      section: form.section || '',
+      category: form.category || '',
+      subcategory: form.subcategory || '',
+      secondary_section: form.secondarySection || '',
+      secondary_category: form.secondaryCategory || '',
+      secondary_subcategory: form.secondarySubcategory || '',
+      error_type: form.errorType || '',
+      takeaway: form.takeaway || '',
+      notes: form.notes || '',
+      question_ref: form.questionRef || '',
+      question_link: form.questionLink || '',
+      screenshot_url: form.screenshotUrl || '',
+      one_pager_link: form.onePagerLink || '',
+      current_confidence: 'Low',
+      review_interval: 1,
+      last_reviewed: null,
+      next_review_due: todayStr,
+      review_count: 0,
+      correct_answer: form.correctAnswer || '',
+      answer_explanation: form.answerExplanation || '',
     };
 
-    setEntries([newEntry, ...entries]);
-    setForm({ ...emptyForm, section: form.section });
-  };
+    const { data, error } = await supabase
+      .from('entries')
+      .insert([payload])
+      .select()
+      .single();
 
-  const removeEntry = (id) => {
+    if (error) {
+      console.error(error);
+      alert('Could not save entry.');
+    } else if (data) {
+      const newEntry = {
+        id: data.id,
+        date: data.date || '',
+        source: data.source || '',
+        section: data.section || '',
+        category: data.category || '',
+        subcategory: data.subcategory || '',
+        secondarySection: data.secondary_section || '',
+        secondaryCategory: data.secondary_category || '',
+        secondarySubcategory: data.secondary_subcategory || '',
+        errorType: data.error_type || '',
+        takeaway: data.takeaway || '',
+        questionRef: data.question_ref || '',
+        questionLink: data.question_link || '',
+        screenshotName: '',
+        screenshotUrl: data.screenshot_url || '',
+        onePagerLink: data.one_pager_link || '',
+        notes: data.notes || '',
+        currentConfidence: data.current_confidence || 'Low',
+        reviewInterval: data.review_interval || 1,
+        lastReviewed: data.last_reviewed || '',
+        nextReviewDue: data.next_review_due || '',
+        reviewCount: data.review_count || 0,
+        answerChoiceSelected: '',
+        correctAnswer: data.correct_answer || '',
+        answerExplanation: data.answer_explanation || '',
+        revealState: false,
+      };
+      setEntries([newEntry, ...entries]);
+      setForm({ ...emptyForm, section: form.section });
+    }
+
+    setSaving(false);
+  }
+
+  async function removeEntry(id) {
+    const previous = entries;
     setEntries(entries.filter((e) => e.id !== id));
-  };
+
+    const { error } = await supabase.from('entries').delete().eq('id', id);
+
+    if (error) {
+      console.error(error);
+      alert('Could not delete entry.');
+      setEntries(previous);
+    }
+  }
 
   const handleFileUpload = (event) => {
     const file = event.target.files?.[0];
@@ -439,27 +527,47 @@ export default function App() {
     setEntries(entries.map((e) => (e.id === entryId ? { ...e, revealState: true } : e)));
   };
 
-  const reviewQuestion = (entryId, confidence) => {
+  async function reviewQuestion(entryId, confidence) {
     const now = new Date();
-    setEntries(
-      entries.map((e) => {
-        if (e.id !== entryId) return e;
-        const interval = getNextInterval(e.reviewInterval || 1, confidence);
-        const nextDate = new Date(now);
-        nextDate.setDate(nextDate.getDate() + interval);
-        return {
-          ...e,
-          currentConfidence: confidence,
-          reviewInterval: interval,
-          lastReviewed: formatDate(now),
-          nextReviewDue: formatDate(nextDate),
-          reviewCount: (e.reviewCount || 0) + 1,
-          answerChoiceSelected: '',
-          revealState: false,
-        };
-      })
+    const target = entries.find((e) => e.id === entryId);
+    if (!target) return;
+
+    const interval = getNextInterval(target.reviewInterval || 1, confidence);
+    const nextDate = new Date(now);
+    nextDate.setDate(nextDate.getDate() + interval);
+
+    const updatedLocal = entries.map((e) =>
+      e.id === entryId
+        ? {
+            ...e,
+            currentConfidence: confidence,
+            reviewInterval: interval,
+            lastReviewed: formatDate(now),
+            nextReviewDue: formatDate(nextDate),
+            reviewCount: (e.reviewCount || 0) + 1,
+            answerChoiceSelected: '',
+            revealState: false,
+          }
+        : e
     );
-  };
+    setEntries(updatedLocal);
+
+    const { error } = await supabase
+      .from('entries')
+      .update({
+        current_confidence: confidence,
+        review_interval: interval,
+        last_reviewed: formatDate(now),
+        next_review_due: formatDate(nextDate),
+        review_count: (target.reviewCount || 0) + 1,
+      })
+      .eq('id', entryId);
+
+    if (error) {
+      console.error(error);
+      alert('Could not update review progress.');
+    }
+  }
 
   const cardStyle = {
     background: pastel.panel,
@@ -476,6 +584,14 @@ export default function App() {
     background: 'white',
     color: pastel.ink,
   };
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', background: pastel.bg, display: 'grid', placeItems: 'center' }}>
+        <div style={{ fontSize: 18, color: pastel.slate }}>Loading your tracker…</div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -693,33 +809,6 @@ export default function App() {
                       </div>
                     );
                   })}
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                    <div>
-                      <div style={{ fontSize: 14, color: pastel.slate, fontWeight: 600, marginBottom: 8 }}>
-                        Current overall
-                      </div>
-                      <input
-                        style={inputStyle}
-                        value={scores.overallCurrent}
-                        onChange={(e) =>
-                          setScores({ ...scores, overallCurrent: Number(e.target.value || 0) })
-                        }
-                      />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 14, color: pastel.slate, fontWeight: 600, marginBottom: 8 }}>
-                        Goal overall
-                      </div>
-                      <input
-                        style={inputStyle}
-                        value={scores.overallGoal}
-                        onChange={(e) =>
-                          setScores({ ...scores, overallGoal: Number(e.target.value || 0) })
-                        }
-                      />
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -862,12 +951,6 @@ export default function App() {
                           <div style={{ marginTop: 4, fontSize: 18, fontWeight: 800 }}>
                             {entry.section} • {entry.category} → {entry.subcategory}
                           </div>
-                          {entry.secondarySection && (
-                            <div style={{ fontSize: 13, color: pastel.slate, marginTop: 4 }}>
-                              Secondary tag: {entry.secondarySection} • {entry.secondaryCategory}{' '}
-                              → {entry.secondarySubcategory}
-                            </div>
-                          )}
                         </div>
                         <div style={{ fontSize: 13, color: pastel.muted }}>
                           Reviewed {entry.reviewCount || 0} times
@@ -905,8 +988,7 @@ export default function App() {
                             color: pastel.slate,
                           }}
                         >
-                          No screenshot attached for this question yet. You can still use
-                          the concept, notes, and takeaway for review.
+                          No screenshot attached for this question yet.
                         </div>
                       )}
 
@@ -948,38 +1030,6 @@ export default function App() {
                         >
                           Reveal answer
                         </IconButton>
-                        {entry.questionLink && (
-                          <a
-                            href={entry.questionLink}
-                            target="_blank"
-                            rel="noreferrer"
-                            style={{
-                              border: `1px solid ${pastel.cloud}`,
-                              padding: '10px 14px',
-                              borderRadius: 999,
-                              fontSize: 14,
-                            }}
-                          >
-                            <LinkIcon size={14} style={{ verticalAlign: '-2px', marginRight: 6 }} />
-                            Open question
-                          </a>
-                        )}
-                        {entry.onePagerLink && (
-                          <a
-                            href={entry.onePagerLink}
-                            target="_blank"
-                            rel="noreferrer"
-                            style={{
-                              border: `1px solid ${pastel.cloud}`,
-                              padding: '10px 14px',
-                              borderRadius: 999,
-                              fontSize: 14,
-                            }}
-                          >
-                            <BookOpen size={14} style={{ verticalAlign: '-2px', marginRight: 6 }} />
-                            One-Pager
-                          </a>
-                        )}
                       </div>
 
                       {entry.revealState && (
@@ -1017,12 +1067,6 @@ export default function App() {
                             <strong>Takeaway:</strong> {entry.takeaway}
                           </div>
 
-                          {entry.notes && (
-                            <div style={{ fontSize: 13, color: pastel.slate, marginTop: 12 }}>
-                              {entry.notes}
-                            </div>
-                          )}
-
                           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 14 }}>
                             <IconButton
                               onClick={() => reviewQuestion(entry.id, 'Low')}
@@ -1056,7 +1100,7 @@ export default function App() {
                       fontSize: 14,
                     }}
                   >
-                    No questions due today. Cute and suspicious.
+                    No questions due today.
                   </div>
                 )}
               </div>
@@ -1065,52 +1109,17 @@ export default function App() {
             <div style={cardStyle}>
               <div style={{ marginBottom: 12 }}>
                 <div style={{ fontWeight: 800, fontSize: 20 }}>Review Rules</div>
-                <div style={{ fontSize: 14, color: pastel.muted, marginTop: 4 }}>
-                  Simple spaced repetition for your old misses
-                </div>
               </div>
 
               <div style={{ display: 'grid', gap: 12, color: pastel.slate }}>
-                <div
-                  style={{
-                    background: pastel.bg,
-                    padding: 12,
-                    borderRadius: 18,
-                    fontSize: 14,
-                  }}
-                >
+                <div style={{ background: pastel.bg, padding: 12, borderRadius: 18, fontSize: 14 }}>
                   <strong>Low confidence:</strong> comes back tomorrow.
                 </div>
-                <div
-                  style={{
-                    background: pastel.bg,
-                    padding: 12,
-                    borderRadius: 18,
-                    fontSize: 14,
-                  }}
-                >
+                <div style={{ background: pastel.bg, padding: 12, borderRadius: 18, fontSize: 14 }}>
                   <strong>Medium confidence:</strong> interval doubles.
                 </div>
-                <div
-                  style={{
-                    background: pastel.bg,
-                    padding: 12,
-                    borderRadius: 18,
-                    fontSize: 14,
-                  }}
-                >
+                <div style={{ background: pastel.bg, padding: 12, borderRadius: 18, fontSize: 14 }}>
                   <strong>High confidence:</strong> interval triples.
-                </div>
-                <div
-                  style={{
-                    background: pastel.bg,
-                    padding: 12,
-                    borderRadius: 18,
-                    fontSize: 14,
-                  }}
-                >
-                  Older questions naturally come back because anything due gets pulled
-                  into the review queue first.
                 </div>
               </div>
             </div>
@@ -1122,10 +1131,6 @@ export default function App() {
             <div style={cardStyle}>
               <div style={{ marginBottom: 12 }}>
                 <div style={{ fontWeight: 800, fontSize: 20 }}>Add Missed Question</div>
-                <div style={{ fontSize: 14, color: pastel.muted, marginTop: 4 }}>
-                  Section = MCAT section, category = Kaplan book, subcategory = Kaplan
-                  chapter or concept bucket
-                </div>
               </div>
 
               <div
@@ -1479,12 +1484,8 @@ export default function App() {
                 >
                   <IconButton onClick={addEntry} bg={pastel.rose}>
                     <Plus size={16} style={{ verticalAlign: '-3px', marginRight: 6 }} />
-                    Add Entry
+                    {saving ? 'Saving...' : 'Add Entry'}
                   </IconButton>
-                  <div style={{ fontSize: 13, color: pastel.muted }}>
-                    Log wrong or guessed questions. Save screenshots only when the visual
-                    matters.
-                  </div>
                 </div>
               </div>
             </div>
@@ -1496,9 +1497,6 @@ export default function App() {
             <div style={cardStyle}>
               <div style={{ marginBottom: 12 }}>
                 <div style={{ fontWeight: 800, fontSize: 20 }}>All Logged Questions</div>
-                <div style={{ fontSize: 14, color: pastel.muted, marginTop: 4 }}>
-                  Your searchable archive of missed and guessed questions
-                </div>
               </div>
 
               <div style={{ display: 'grid', gap: 16 }}>
@@ -1520,15 +1518,6 @@ export default function App() {
                         <div style={{ marginTop: 4, fontWeight: 800 }}>
                           {entry.section} • {entry.category} → {entry.subcategory}
                         </div>
-                        <div style={{ fontSize: 13, marginTop: 4 }}>
-                          Error type: <strong>{entry.errorType}</strong>
-                        </div>
-                        {entry.secondarySection && (
-                          <div style={{ fontSize: 13, marginTop: 4, color: pastel.slate }}>
-                            Secondary tag: {entry.secondarySection} • {entry.secondaryCategory}{' '}
-                            → {entry.secondarySubcategory}
-                          </div>
-                        )}
                       </div>
 
                       <button
@@ -1555,79 +1544,6 @@ export default function App() {
                       }}
                     >
                       <strong>Takeaway:</strong> {entry.takeaway}
-                    </div>
-
-                    {entry.notes && (
-                      <div style={{ fontSize: 13, color: pastel.slate, marginTop: 12 }}>
-                        {entry.notes}
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
-                      {entry.questionRef && (
-                        <span
-                          style={{
-                            border: `1px solid ${pastel.cloud}`,
-                            padding: '8px 12px',
-                            borderRadius: 999,
-                            fontSize: 13,
-                            background: 'white',
-                          }}
-                        >
-                          {entry.questionRef}
-                        </span>
-                      )}
-                      {entry.questionLink && (
-                        <a
-                          href={entry.questionLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{
-                            border: `1px solid ${pastel.cloud}`,
-                            padding: '8px 12px',
-                            borderRadius: 999,
-                            fontSize: 13,
-                            background: 'white',
-                          }}
-                        >
-                          <LinkIcon size={14} style={{ verticalAlign: '-2px', marginRight: 6 }} />
-                          Question
-                        </a>
-                      )}
-                      {entry.onePagerLink && (
-                        <a
-                          href={entry.onePagerLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{
-                            border: `1px solid ${pastel.cloud}`,
-                            padding: '8px 12px',
-                            borderRadius: 999,
-                            fontSize: 13,
-                            background: 'white',
-                          }}
-                        >
-                          <BookOpen size={14} style={{ verticalAlign: '-2px', marginRight: 6 }} />
-                          One-Pager
-                        </a>
-                      )}
-                      {entry.screenshotUrl && (
-                        <a
-                          href={entry.screenshotUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{
-                            border: `1px solid ${pastel.cloud}`,
-                            padding: '8px 12px',
-                            borderRadius: 999,
-                            fontSize: 13,
-                            background: 'white',
-                          }}
-                        >
-                          <Camera size={14} style={{ verticalAlign: '-2px', marginRight: 6 }} />
-                          Screenshot
-                        </a>
-                      )}
                     </div>
 
                     <div style={{ fontSize: 13, color: pastel.muted, marginTop: 12 }}>
